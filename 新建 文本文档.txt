@@ -1,0 +1,455 @@
+#include <reg51.h>
+#include <intrins.h>
+#include <DS18B20.h>
+
+#define uchar unsigned char                // 以后unsigned char就可以用uchar代替
+#define uint  unsigned int                // 以后unsigned int 就可以用uint 代替
+
+sfr ISP_DATA  = 0xe2;                        // 数据寄存器
+sfr ISP_ADDRH = 0xe3;                        // 地址寄存器高八位
+sfr ISP_ADDRL = 0xe4;                        // 地址寄存器低八位
+sfr ISP_CMD   = 0xe5;                        // 命令寄存器
+sfr ISP_TRIG  = 0xe6;                        // 命令触发寄存器
+sfr ISP_CONTR = 0xe7;                        // 命令寄存器
+
+sbit ADC_CS   = P3^5;                         // ADC0832的CS引脚
+sbit ADC_CLK  = P3^6;                         // ADC0832的CLK引脚
+sbit ADC_DAT  = P3^7;                 // ADC0832的DI/DO引脚
+
+sbit LcdRs_P  = P0^0;                     // 1602液晶的RS管脚      
+sbit LcdRw_P  = P0^1;                     // 1602液晶的RW管脚
+sbit LcdEn_P  = P0^2;                     // 1602液晶的EN管脚
+
+sbit LcdDB0 = P0^3;
+sbit LcdDB1 = P0^4;
+sbit LcdDB2 = P0^5;
+sbit LcdDB3 = P0^6;
+sbit LcdDB4 = P0^7;
+sbit LcdDB5 = P2^7;
+sbit LcdDB6 = P2^6;
+sbit LcdDB7 = P2^5;
+
+sbit KeySet_P = P2^0;     //设置报警值按键
+sbit KeyChoose_P = P2^1;    //选择设置温度值还是报警值
+sbit KeySubtract_P   = P2^2;                        // 减按键
+sbit KeyAdd_P   = P2^3;                        // 加按键
+
+sbit Buzzer_P = P1^2;                        // 蜂鸣器
+//sbit Led_P    = P2^1;                        // LED灯
+
+uchar gAlarm = 0;// 报警值
+char tAlarm; //报警值
+
+int set_flag = 1;   //选择设置界面标志
+int tmp_flag = 1;    //选择温度标志
+
+/*********************************************************/
+// 单片机内部EEPROM不使能
+/*********************************************************/
+void ISP_Disable()
+{
+        ISP_CONTR = 0;
+        ISP_ADDRH = 0;
+        ISP_ADDRL = 0;
+}
+
+/*********************************************************/
+// 从单片机内部EEPROM读一个字节，从0x2000地址开始
+/*********************************************************/
+unsigned char EEPROM_Read(unsigned int add)
+{
+        ISP_DATA  = 0x00;
+        ISP_CONTR = 0x83;
+        ISP_CMD   = 0x01;
+        ISP_ADDRH = (unsigned char)(add>>8);
+        ISP_ADDRL = (unsigned char)(add&0xff);
+        // 对STC89C51系列来说，每次要写入0x46，再写入0xB9,ISP/IAP才会生效
+        ISP_TRIG  = 0x46;          
+        ISP_TRIG  = 0xB9;
+        _nop_();
+        ISP_Disable();
+        return (ISP_DATA);
+}
+
+/*********************************************************/
+// 往单片机内部EEPROM写一个字节，从0x2000地址开始
+/*********************************************************/
+void EEPROM_Write(unsigned int add,unsigned char ch)
+{
+        ISP_CONTR = 0x83;
+        ISP_CMD   = 0x02;
+        ISP_ADDRH = (unsigned char)(add>>8);
+        ISP_ADDRL = (unsigned char)(add&0xff);
+        ISP_DATA  = ch;
+        ISP_TRIG  = 0x46;
+        ISP_TRIG  = 0xB9;
+        _nop_();
+        ISP_Disable();
+}
+
+/*********************************************************/
+// 擦除单片机内部EEPROM的一个扇区
+// 写8个扇区中随便一个的地址，便擦除该扇区，写入前要先擦除
+/*********************************************************/
+void Sector_Erase(unsigned int add)          
+{
+        ISP_CONTR = 0x83;
+        ISP_CMD   = 0x03;
+        ISP_ADDRH = (unsigned char)(add>>8);
+        ISP_ADDRL = (unsigned char)(add&0xff);
+        ISP_TRIG  = 0x46;
+        ISP_TRIG  = 0xB9;
+        _nop_();
+        ISP_Disable();
+}
+
+
+
+/*********************************************************/
+// 毫秒级的延时函数，time是要延时的毫秒数
+/*********************************************************/
+void DelayMs(uint time)
+{
+        uint i,j;
+        for(i=0;i<time;i++)
+                for(j=0;j<112;j++);
+}
+
+/*********************************************************/
+// 1602液晶写命令函数，cmd就是要写入的命令
+/*********************************************************/
+void LcdWriteCmd(uchar cmd)
+{
+        LcdRs_P = 0;
+        LcdRw_P = 0;
+        LcdEn_P = 0;
+
+		//8个数据位使用P0端口
+//        P0=cmd;
+
+		//数据位用不同的IO口
+		LcdDB0 = cmd & 0x01; cmd >>= 1;
+		LcdDB1 = cmd & 0x01; cmd >>= 1;
+		LcdDB2 = cmd & 0x01; cmd >>= 1;
+		LcdDB3 = cmd & 0x01; cmd >>= 1;
+		LcdDB4 = cmd & 0x01; cmd >>= 1;
+		LcdDB5 = cmd & 0x01; cmd >>= 1;
+		LcdDB6 = cmd & 0x01; cmd >>= 1;
+		LcdDB7 = cmd & 0x01;
+
+        DelayMs(2);
+        LcdEn_P = 1;   
+        DelayMs(2);
+        LcdEn_P = 0;       
+}
+
+/*********************************************************/
+// 1602液晶写数据函数，dat就是要写入的数据
+/*********************************************************/
+void LcdWriteData(uchar dat)
+{
+        LcdRs_P = 1;
+        LcdRw_P = 0;
+        LcdEn_P = 0;
+
+		//八个数据位使用了P0端口
+//        P0=dat;
+
+		//数据位用不同的IO口
+		LcdDB0 = dat & 0x01; dat >>= 1;
+		LcdDB1 = dat & 0x01; dat >>= 1;
+		LcdDB2 = dat & 0x01; dat >>= 1;
+		LcdDB3 = dat & 0x01; dat >>= 1;
+		LcdDB4 = dat & 0x01; dat >>= 1;
+		LcdDB5 = dat & 0x01; dat >>= 1;
+		LcdDB6 = dat & 0x01; dat >>= 1;
+		LcdDB7 = dat & 0x01;
+
+        DelayMs(2);
+        LcdEn_P = 1;   
+        DelayMs(2);
+        LcdEn_P = 0;
+}
+
+
+
+
+
+/*********************************************************/
+// 1602液晶初始化函数
+/*********************************************************/
+void LcdInit()
+{
+        LcdWriteCmd(0x38);        // 16*2显示，5*7点阵，8位数据口
+        LcdWriteCmd(0x0C);        // 开显示，不显示光标
+        LcdWriteCmd(0x06);        // 地址加1，当写入数据后光标右移
+        LcdWriteCmd(0x01);        // 清屏
+}
+
+/*********************************************************/
+// 液晶光标定位函数
+/*********************************************************/
+void LcdGotoXY(uchar line,uchar column)
+{
+        // 第一行
+        if(line==0)        
+                LcdWriteCmd(0x80+column);
+         // 第二行
+        if(line==1)        
+                LcdWriteCmd(0x80+0x40+column);
+}
+
+/*********************************************************/
+// 液晶输出字符串函数
+/*********************************************************/
+void LcdPrintStr(uchar *str)
+{
+        while(*str!='\0')
+                LcdWriteData(*str++);
+}
+
+/*********************************************************/
+// 液晶输出数字
+/*********************************************************/
+void LcdPrintNum(uchar num)
+{
+        LcdWriteData(num/100+48);                        // 百位
+        LcdWriteData(num%100/10+48);                // 十位
+        LcdWriteData(num%10+48);                         // 个位
+}
+
+
+/*********************************************************/
+// 液晶显示初始化
+/*********************************************************/
+void LcdShowInit()
+{
+        LcdGotoXY(0,0);                                                // 液晶光标定位到第0行
+        LcdPrintStr("Tmp:    Warn:   ");                // 液晶第0行显示"  MQ-2 System   "
+        LcdGotoXY(1,0);                                                // 液晶光标定位到第1行
+        LcdPrintStr("Gas:    Warn:   ");                        // 液晶第1行显示"Gas:    Warn:   "
+}
+
+/*********************************************************/
+// ADC0832的时钟脉冲
+/*********************************************************/
+void WavePlus()
+{
+        _nop_();
+        ADC_CLK = 1;
+        _nop_();
+        ADC_CLK = 0;
+}
+
+/*********************************************************/
+// 获取指定通道的A/D转换结果
+/*********************************************************/
+uchar Get_ADC0832()
+{
+        uchar i;
+        uchar dat1=0;
+        uchar dat2=0;
+        ADC_CLK = 0;                                // 电平初始化
+        ADC_DAT = 1;
+        _nop_();
+        ADC_CS = 0;
+        WavePlus();                                // 起始信号
+        ADC_DAT = 1;
+        WavePlus();                                // 通道选择的第一位
+        ADC_DAT = 0;      
+        WavePlus();                                // 通道选择的第二位
+        ADC_DAT = 1;
+        for(i=0;i<8;i++)                        // 第一次读取
+        {
+                dat1<<=1;
+                WavePlus();
+                if(ADC_DAT)
+                        dat1=dat1|0x01;
+                else
+                        dat1=dat1|0x00;
+        }
+        for(i=0;i<8;i++)                        // 第二次读取
+        {
+                dat2>>= 1;
+                if(ADC_DAT)
+                        dat2=dat2|0x80;
+                else
+                        dat2=dat2|0x00;
+                WavePlus();
+        }
+        _nop_();                                        // 结束此次传输
+        ADC_DAT = 1;
+        ADC_CLK = 1;
+        ADC_CS  = 1;   
+        if(dat1==dat2)                                // 返回采集结果
+                return dat1;
+        else
+                return 0;
+}
+
+/*********************************************************/
+// 按键扫描
+/*********************************************************/
+void KeyScanf()
+{
+	uchar num_gas;
+
+	if(KeySet_P == 0 && set_flag == 1)  //显示设置界面
+	{
+		set_flag = 0;
+		
+		LcdGotoXY(0,0);                                                // 液晶光标定位到第0行
+        LcdPrintStr("set tmp warn:   ");                // 液晶第0行显示"  MQ-2 System   "
+		
+		//LcdGotoXY(0,13);
+		//LcdPrintNum(tAlarm);   //当前设置的温度报警值
+
+        LcdGotoXY(1,0);                                                // 液晶光标定位到第1行
+        LcdPrintStr("set gas warn:   ");                        // 液晶第1行显示"Gas:    Warn:   "	
+        LcdGotoXY(1,13);                                        // 液晶光标定位到第1行第13列
+        LcdPrintNum(gAlarm);   //当前设置的气体报警值
+
+		if(KeyChoose_P == 0 && tmp_flag == 1)
+		{
+			tmp_flag = 0;
+			LcdGotoXY(0,0);                                                // 液晶光标定位到第0行
+        	LcdPrintStr("set tmp warn:   ");                // 液晶第0行显示"  MQ-2 System   "
+
+			//获取当前温度报警值
+			//////
+
+
+		}
+		if(KeyChoose_P == 0 && tmp_flag == 0)
+		{
+			tmp_flag = 1;
+
+			LcdGotoXY(1,0);                                                // 液晶光标定位到第0行
+        	LcdPrintStr("set gas warn:   ");                // 液晶第0行显示"  MQ-2 System   "
+			LcdGotoXY(1,13);                                                // 液晶光标定位到第0行
+        	LcdPrintNum(gAlarm);
+
+			if(KeySubtract_P==0)                                                        // 如果减按键被按下       
+        	{
+                if(gAlarm>1)                                                // 只有gAlarm大于1才能减1                                                               
+                        gAlarm--;                               
+                LcdGotoXY(1,13);                                        // 液晶光标定位到第1行第13列
+                LcdPrintNum(gAlarm);                                // 刷新改变后的报警值
+                DelayMs(250);                                                // 延时一下
+                Sector_Erase(0x2000);                                // 存入.......前先擦除
+                EEPROM_Write(0x2000,gAlarm);                // 报警值存入EEPROM的0x2000这个地址
+        	}
+        	if(KeyAdd_P==0)                                                        // 如果加按键被按下       
+        	{
+                if(gAlarm<100)                                        // 只有gAlarm小于100才能加1
+                        gAlarm++;                               
+                LcdGotoXY(1,13);                                        // 液晶光标定位到第1行第13列
+                LcdPrintNum(gAlarm);                                // 刷新改变后的报警值
+                DelayMs(250);                                                // 延时一下
+                Sector_Erase(0x2000);                                // 存入EEPROM前先擦除
+                EEPROM_Write(0x2000,gAlarm);                // 报警值存入EEPROM的0x2000这个地址
+        	}
+		}		
+	}
+	if(KeySet_P == 0 && set_flag == 0)  //显示当前温度、烟雾界面
+	{
+		set_flag = 1;
+
+		LcdGotoXY(0,0);                                                // 液晶光标定位到第0行
+        LcdPrintStr("Tmp:    Warn:   ");                // 液晶第0行显示"  MQ-2 System   "
+
+		//获取当前温度和报警值
+		//////
+		
+
+        LcdGotoXY(1,0);                                                // 液晶光标定位到第1行
+        LcdPrintStr("Gas:    Warn:   ");                        // 液晶第1行显示"Gas:    Warn:   "
+		num_gas=Get_ADC0832();                        // 获取烟雾的浓度值
+        num_gas=num_gas/2.2;                                // 调整浓度值，使其在0-100之间变化
+        if(num_gas>100)
+           num_gas=100;
+        LcdGotoXY(1,4);                                // 液晶光标定位到第1行第4列
+       	LcdPrintNum(num_gas);                        // 显示烟雾浓度的值
+		LcdGotoXY(1,13);                                // 液晶光标定位到第1行第4列
+       	LcdPrintNum(gAlarm);
+	}
+}
+
+/*********************************************************/
+// 报警判断
+/*********************************************************/
+void AlarmJudge(uchar dat_gas, char dat_tmp)
+{
+        if(dat_gas > gAlarm || dat_tmp > tAlarm)
+        {
+                Buzzer_P=0;                // 蜂鸣器报警
+                //Led_P=0;                        // LED灯亮
+        }
+        else
+        {
+                Buzzer_P=1;                // 蜂鸣器停止报警
+                //Led_P=1;                        // LED熄灭
+        }       
+}
+
+
+
+/*********************************************************/
+// 主函数
+/*********************************************************/
+void main(void)
+{
+		unsigned int i=0;
+		char ltemp;
+		uchar num_tmp;
+
+        uchar num_gas;
+        LcdInit();                                                    // 液晶功能初始化
+        LcdShowInit();                                                // 液晶显示内容初始化
+
+        gAlarm=EEPROM_Read(0x2000);                // 从EEPROM中读取报警值
+        if((gAlarm==0)||(gAlarm>100))                // 如果读出来数据异常，则重新赋值30
+                gAlarm=30;
+        LcdGotoXY(1,13);                                        // 液晶光标定位到第1行第13列
+        LcdPrintNum(gAlarm);                                // 显示报警值
+
+		tAlarm=EEPROM_Read(0x2001);                // 从EEPROM中读取报警值
+        if((tAlarm==0)||(tAlarm>100))                // 如果读出来数据异常，则重新赋值30
+                tAlarm=30;
+        LcdGotoXY(0,13);                                        // 液晶光标定位到第1行第13列
+        LcdPrintNum(tAlarm);                                // 显示报警值
+
+        while(1)
+        {
+
+				//温度
+				if(i==0)				//先发转换命令，再读数值，以减少速度慢带来的显示抖动
+					tmpchange();      	//温度转换
+				if(i==100){
+					ltemp=tmp()/16;		//得到十进制温度值，因为DS18B20可以精确到0.0625度，这里取整数显示
+					if(ltemp<0){		//判断第一位显示整数还是负号
+						num_tmp=0-ltemp;
+						LcdGotoXY(0,4);                                // 液晶光标定位到第1行第4列
+                		LcdPrintNum("-");                        // 显示烟雾浓度的值
+						LcdGotoXY(0,5);                                // 液晶光标定位到第1行第4列
+                		LcdPrintNum(num_tmp);
+					}
+				}
+				i++;
+				if(i==3000)				//3000一个读取周期
+					i=0;
+
+				//烟雾浓度
+                num_gas=Get_ADC0832();                        // 获取烟雾的浓度值
+                num_gas=num_gas/2.2;                                // 调整浓度值，使其在0-100之间变化
+                if(num_gas>100)
+                        num_gas=100;
+                LcdGotoXY(1,4);                                // 液晶光标定位到第1行第4列
+                LcdPrintNum(num_gas);                        // 显示烟雾浓度的值
+               
+                KeyScanf();                                        // 按键扫描
+                       
+                AlarmJudge(num_gas, ltemp);                        // 报警判断
+                DelayMs(50);
+        }
+}
