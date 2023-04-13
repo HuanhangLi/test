@@ -11,7 +11,9 @@ from time import sleep
 
 from PyQt5.QtCore import pyqtSignal   # PyQt5中使用的基本控件都在PyQt5.QtWidgets模块中
 from PyQt5.QtWidgets import QApplication, QMainWindow
-from tcpServer import Ui_Form  # 导入designer工具生成的模块
+from tcpServer_ui import Ui_Form  # 导入designer工具生成的模块
+
+import StopThreading
 
 import socket
 import threading
@@ -20,6 +22,8 @@ import struct
 
 
 class MyMainForm(QMainWindow, Ui_Form):
+
+    # 信号
     tcp_signal_write_info = pyqtSignal(str, str)
     tcp_signal_ip_and_port = pyqtSignal(str, int)
 
@@ -27,43 +31,41 @@ class MyMainForm(QMainWindow, Ui_Form):
         super(MyMainForm, self).__init__(parent)
         self.setupUi(self)
         self.open_Button.clicked.connect(self.get_ip_and_port)  # 添加登录按钮信号和槽。注意display函数不加小括号()  # 按鈕點擊動作，綁定要執行的函數
-        self.close_Button.clicked.connect(self.close)  # 添加退出按钮信号和槽。调用close函数
+        self.close_Button.clicked.connect(self.tcp_close)  # 添加退出按钮信号和槽。调用close函数
 
         self.tcp_signal_write_info.connect(self.receive_display)
-        # self.tcp_signal_ip_and_port.connect(self.tcpServer_start)
+        self.tcp_signal_ip_and_port.connect(self.tcpServer_start)
 
         self.tcp_socket = None
         self.sever_th = None
         self.client_th = None
         self.client_socket_list = list()
+        self.flag_tcp_opened = False
 
-    def get_ip_and_port(self):
+    def get_ip_and_port(self):  # 获取IP地址和端口号
         ip = self.IP_lineEdit.text()  # 利用line Edit控件对象text()函数获取界面输入
         port = self.port_lineEdit.text()
         if ip != "" and port != "":
             self.tcp_signal_ip_and_port.emit(ip, int(port))
-        # else:
-        #     self.receive_textBrowser.setText("錯誤，請檢查IP地址和端口號")
-            # pass   # 這裡很重要，如果沒有else這句，點擊按鈕後會自動退出程序
+        else:
+            self.receive_textBrowser.setText("錯誤，請檢查IP地址和端口號")
 
-    def tcpServer_start(self, ip: str, port: int):
+    def tcpServer_start(self, ip: str, port: int):   # 如果IP地址和端口号不为空，则开启服务器
         self.tcp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        # 取消主动断开连接四次握手后的TIME_WAIT状态
-        self.tcp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        # 设定套接字为非阻塞式
-        self.tcp_socket.setblocking(False)
+        self.tcp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  # 取消主动断开连接四次握手后的TIME_WAIT状态
+        self.tcp_socket.setblocking(False)   # 设定套接字为非阻塞式
         self.tcp_socket.bind((ip, port))
         self.tcp_socket.listen(5)  # 限制最大连接数
         self.sever_th = threading.Thread(target=self.tcp_server_concurrency)
         self.sever_th.start()
-        # print("正在監聽端口：", 6666)
+        self.flag_tcp_opened = True
+        print("正在監聽端口：" + str(port))
 
-    def tcp_server_concurrency(self):
+    def tcp_server_concurrency(self):  # 数据接收，只接收str
         """
         功能函数，供创建线程的方法；
         使用子线程用于监听并创建连接，使主线程可以继续运行，以免无响应
         使用非阻塞式并发用于接收客户端消息，减少系统资源浪费，使软件轻量化
-
         :return: None
         """
         while True:
@@ -78,6 +80,8 @@ class MyMainForm(QMainWindow, Ui_Form):
                 print("TCP服务端已连接IP:" + client_address[0] + "  端口：" + str(client_address[1]))
                 # msg = f"TCP服务端已连接IP:{client_address[0]}端口:{client_address[1]}\n"
                 # self.tcp_signal_write_msg.emit(msg)
+                print(len(self.client_socket_list))
+
             # 轮询客户端套接字列表，接收数据
             for client, address in self.client_socket_list:
                 try:
@@ -107,6 +111,28 @@ class MyMainForm(QMainWindow, Ui_Form):
         # self.user_textBrowser.setText(info)
         self.receive_textBrowser.insertPlainText(msg)
         self.receive_textBrowser.insertPlainText(info + '\n')
+
+    def tcp_close(self):   # 關閉服務，關閉socket server，停止線程
+        """
+        功能函数，关闭网络连接的方法
+        """
+        if self.flag_tcp_opened:   # 需要根據已開啟的標誌做判斷，不然執行.close()方法會導致程序結束
+            for client, address in self.client_socket_list:
+                client.shutdown(socket.SHUT_RDWR)
+                client.close()
+            self.client_socket_list = list()  # 把已连接的客户端列表重新置为空列表
+            self.tcp_socket.close()
+            # msg = "已断开网络\n"
+            # self.tcp_signal_write_msg.emit(msg)
+            self.flag_tcp_opened = False
+            print("已断开网络\n")
+
+            try:
+                StopThreading.stop_thread(self.sever_th)
+            except Exception as ret:
+                pass
+        else:
+            self.receive_textBrowser.setText("服务未开启")
 
 
 if __name__ == "__main__":
