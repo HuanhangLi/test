@@ -22,6 +22,7 @@ import os
 import struct
 
 import binascii
+import time
 
 
 class MyMainForm(QMainWindow, Ui_Form):
@@ -34,7 +35,7 @@ class MyMainForm(QMainWindow, Ui_Form):
         self.setupUi(self)
         self.open_Button.clicked.connect(self.get_ip_and_port)  # 添加登录按钮信号和槽。注意display函数不加小括号()  # 按鈕點擊動作，綁定要執行的函數
         # self.close_Button.clicked.connect(self.tcp_close)  # 添加退出按钮信号和槽。调用close函数
-        self.pushButton_send.clicked.connect(self.send_data)
+        self.pushButton_send.clicked.connect(self.send_data)  # 发送数据
 
         self.close_Button.clicked.connect(self.display_image)  # test
 
@@ -98,7 +99,7 @@ class MyMainForm(QMainWindow, Ui_Form):
                     recv_msg = client.recv(4096)
                 except Exception as ret:
                     pass
-                else:
+                else:   # try如果没有异常，则执行else这一块
                     # if recv_msg:
                     #     info = recv_msg.decode("utf-8")
                     #     print("来自" + address[0] + ":" + str(address[1]) + "的消息:")
@@ -108,8 +109,13 @@ class MyMainForm(QMainWindow, Ui_Form):
                     #     self.tcp_signal_write_info.emit(msg, info)
                     #     # self.tcp_signal_write_info.emit(msg)
                     #     # self.tcp_signal_write_info.emit(info)
+
                     if recv_msg:
-                        self.Hex2Image(recv_msg)
+                        # print(len(recv_msg))  # test
+                        time_now = time.strftime('%Y%m%d%H%M%S', time.localtime(time.time()))
+                        f = open('test'+time_now+'.jpg', "ab")  # filepath为你要存储的图片的全路径
+                        f.write(recv_msg)  # 将图片数据写入文件，保存到文件夹
+                        f.close()
 
                     else:
                         client.close()
@@ -122,6 +128,8 @@ class MyMainForm(QMainWindow, Ui_Form):
         #     payload = payload.replace("b", '', 1)  # 去除第一个字母b
         #     payload = payload.replace("'", '')  # 去除单引号
         # payload = data.replace("b", '', 1)  # 去除第一个字母b
+        print(data)
+
         f = open('test.jpg', "ab")  # filepath为你要存储的图片的全路径
         # pic = binascii.a2b_hex(payload.encode())
         f.write(data)
@@ -169,13 +177,16 @@ class MyMainForm(QMainWindow, Ui_Form):
         # self.label_image.setScaledContents(true)
 
     def send_data(self):
-        data = self.send_textEdit.toPlainText()
+        # data = self.send_textEdit.toPlainText()
 
-        if len(client_socket_list) > 0 and data != '':
-            # 轮询客户端套接字列表，接收数据
-            for client, address in self.client_socket_list:
-                # self.tcp_socket.send(data)
-                client.send(data.encode())
+        # if len(client_socket_list) > 0 and data != '':
+        #     # 轮询客户端套接字列表，接收数据
+        #     for client, address in self.client_socket_list:
+        #         # self.tcp_socket.send(data)
+        #         client.send(data.encode())
+
+        tcpclient, addr = self.tcp_socket.accept()
+        tcpclient.send("hello".encode())
 
         # tcp_socket
 
