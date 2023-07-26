@@ -1,0 +1,10 @@
+pycharm2021永久試用方法（JetBrains軟件通用）：
+
+1.打開pycharm，File/Settings
+2.plugins，小齒輪，install plugin from disk
+3.選擇插件ide-eval-resetter-2.1.13-da33a93d.zip
+4.安裝完畢點擊apply
+5.help，eval rest，勾選auto reset
+6.激活完成
+
+每次重啟/退出時會自動重置試用信息。
